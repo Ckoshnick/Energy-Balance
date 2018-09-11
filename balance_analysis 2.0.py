@@ -315,6 +315,8 @@ def slope_calc(x, y):
 def balance_plotting(data, ax, period='Daily'):
     """ Plot the energy balance data as either "Daily" or "Monthly" """
 
+    data.columns = split_tags(list(data.columns))
+
     build = data.columns[0]
     data = mypy.build_time_columns(data)
     years = data.index.year.unique()
@@ -428,11 +430,13 @@ headingSize = 16 # text size for plot title and axes titles
 # %% Loading data
 oldPickle = './data/kbtu_EB_pickle.pk1'
 data = pd.read_pickle(oldPickle)
-#data_metics(data).to_excel('dataStats.xlsx')  # TODO: Fix metrics?
+
+# Gross outlier remove technique
+lowerBound = -0.1
+upperBound = 1000000
+data = data[(data > lowerBound) & (data < upperBound)]
 
 # %% Run balances
-data = data.clip(lower=-1, upper=100000)  # Remove serious outlier data
-data.columns = split_tags(list(data.columns))
 monthBalance, monthUse = energy_balance(data, period='monthly')
 dayBalance, dayUse = energy_balance(data, period='daily')
 
