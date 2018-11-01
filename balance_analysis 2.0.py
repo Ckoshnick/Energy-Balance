@@ -6,15 +6,20 @@ Created on Fri Mar 09 10:08:17 2018
 
 """
 
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
-from pylab import text
-import matplotlib.dates as mdates
-from matplotlib.backends.backend_pdf import PdfPages
-from matplotlib.lines import Line2D
 import mypy
+import numpy as np
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+import matplotlib.dates as mdates
+
+from pi_client import pi_client
+
+from pylab import text
+from matplotlib.lines import Line2D
+from matplotlib.backends.backend_pdf import PdfPages
+
+pi = pi_client()
 
 # =============================================================================
 # Constants
@@ -66,6 +71,43 @@ def data_metics(data):
     return stats.T
 
 
+def get_pi_data(end):
+    """
+    Get all of the pi data for the buildings kbtu tags. Only get tags for bldgs
+    that have all 3 tags in PI
+
+    """
+
+    tags = pi.search_by_point(['*_Electricity_Demand_kBtu',
+                               '*_ChilledWater_Demand_kBtu',
+                               '*_Steam_Demand_kBtu'])
+
+    tags = split_tags(tags)
+
+    tags = pi.group_tags(tags,
+                         parentLevel=1,
+                         sensorGroup=['Electricity_Demand_kBtu',
+                                      'ChilledWater_Demand_kBtu',
+                                      'Steam_Demand_kBtu'],
+                         sep='@')
+
+    tags = [tag.replace('@','_') for tag in tags]
+
+    print(len(tags))
+
+#    tags = tags[0:6]
+
+    df = pi.get_stream_by_point(tags, start='2017-01-01', end=end,
+                                interval='1h', calculation='summary',
+                                _chunk_size=20, _buffer_time=0)
+
+    return df
+
+    # get all tags with kbtu demand
+    # filter based on endings
+    # pi_client group function
+
+
 def split_tags(tags):
     """ Helper function to remove the kBtu tags from building name """
     endings = ['_Electricity_Demand_kBtu',
@@ -96,6 +138,11 @@ def energy_balance(data, period='daily'):
                        'Steam_Demand_kBtu',
                        'Electricity_Demand_kBtu')
 
+    data.columns = split_tags(list(data.columns))
+
+#    data = data[data.columns[102:153]].copy() * 1
+    data = data.copy() * 1000
+
     # Build columns
     data = mypy.merge_oat(data)
 
@@ -125,29 +172,32 @@ def energy_balance(data, period='daily'):
     grouped.columns = mypy.make_multi_index(grouped.columns, splitString='@')
     buildings = grouped.columns.get_level_values(0).unique()
 
+    balanceOutput = pd.DataFrame()
+
+
     for build in buildings:
+
+        print(build)
 
         if build in skipList:
             print('skipping ', build)
             continue
         try:
-            area = areas[build]['area']
+            area = areas[build]
         except KeyError:
             print('{} not in areas document'.format(build))
             continue
-        commodities = grouped[build] / area * 1000  # * 1000 to convert to BTU
-        grouped[build] = commodities
 
-    balanceOutput = pd.DataFrame()
+        for comm in [chw, steam, ele]:
+            # For each commodity. divide by area of that comm
+            # set the area normalized values back into the grouped df
+            grouped.loc[:,(build, comm)] = (grouped[build][comm]/(area[comm])).values
 
-    for build in buildings:
-        if build in skipList:
-            print('skip', build)
-            continue
-
-        demands = grouped[build]
         try:
-            balanceOutput[build] = demands[steam] + demands[ele] - demands[chw]
+            # Should already be area normalized
+            balanceOutput[build] = (grouped[build][steam]
+                                    + grouped[build][ele]
+                                    - grouped[build][chw])
         except KeyError:
             print('some commodity missing from {}'.format(build))
             print('columns availible are {}'.format(demands.columns))
@@ -426,19 +476,22 @@ xLim = (35, 99)  # OAT x-axis limits (drop 100 for cleaner x axis)
 figureSize = (8, 8)  # size of individial plot, larger plot is 2x bigger
 textSize = 14  # Text size for tick marks etc
 headingSize = 16 # text size for plot title and axes titles
+sns.set()
 
-# %% Loading data
-oldPickle = './data/kbtu_EB_pickle.pk1'
-data = pd.read_pickle(oldPickle)
+if __name__ == "__main__":
 
-# Gross outlier remove technique
-lowerBound = -0.1
-upperBound = 1000000
-data = data[(data > lowerBound) & (data < upperBound)]
+#    data = get_pi_data(end = dateString)
+    dateString = '2018-10-30'
 
-# %% Run balances
-monthBalance, monthUse = energy_balance(data, period='monthly')
-dayBalance, dayUse = energy_balance(data, period='daily')
+    # Gross outlier remove technique
+    lowerBound = -0.1
+    upperBound = 1000000
+    data = data[(data > lowerBound) & (data < upperBound)]
 
-# %% Plotting
-quad_plot(monthBalance, monthUse, dayBalance, dayUse, endDate='2018-09-01')
+    # % Run balances
+    monthBalance, monthUse = energy_balance(data, period='monthly')
+    dayBalance, dayUse = energy_balance(data, period='daily')
+
+    # % Plotting
+    quad_plot(monthBalance, monthUse, dayBalance, dayUse, endDate=dateString)
+
